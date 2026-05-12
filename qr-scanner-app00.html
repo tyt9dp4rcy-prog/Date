@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>منتجاتي برو - نظام الحذف الذكي (Firebase)</title>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap" rel="stylesheet">
+    
+    <script src="https://cdn.jsdelivr.net/npm/@ericblade/quagga2/dist/quagga.min.js"></script>
+    
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+    <style>
+        :root {
+            --bg: #0a0a0f; --surface: #13131a; --card: #1a1a24;
+            --border: #2a2a3a; --accent: #00e5a0; --text: #f0f0ff;
+            --muted: #6b6b8a; --danger: #ff6b6b; --warn: #ffd166;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Cairo', sans-serif; }
+        body { background: var(--bg); color: var(--text); padding-bottom: 100px; }
+
+        .header { background: var(--surface); padding: 40px 20px 20px; border-bottom: 1px solid var(--border); text-align: center; }
+        .scan-btn { width: 90%; margin: 20px auto; display: flex; align-items: center; justify-content: center; gap: 10px; background: var(--accent); color: #000; border: none; padding: 18px; border-radius: 15px; font-weight: 900; font-size: 18px; cursor: pointer; box-shadow: 0 4px 15px rgba(0, 229, 160, 0.2); transition: 0.2s; }
+        .scan-btn:active { transform: scale(0.98); }
+
+        .empty-state { text-align: center; margin-top: 50px; color: var(--muted); font-size: 18px; display: none; }
+
+        .product-card { position: relative; background: var(--card); margin: 15px 20px; border-radius: 20px; border: 1px solid var(--border); overflow: hidden; transition: 0.3s; }
+        .product-card.highlight { border-color: var(--accent); box-shadow: 0 0 15px rgba(0,229,160,0.5); transform: scale(1.02); }
+        
+        .status-dot { position: absolute; top: 22px; right: 20px; width: 14px; height: 14px; border-radius: 50%; z-index: 5; }
+        .dot-green { background-color: var(--accent); box-shadow: 0 0 12px var(--accent); }
+        .dot-yellow { background-color: var(--warn); box-shadow: 0 0 12px var(--warn); }
+        .dot-red { background-color: var(--danger); box-shadow: 0 0 12px var(--danger); }
+        .dot-gray { background-color: var(--muted); box-shadow: 0 0 12px var(--muted); }
+
+        .card-main { padding: 20px 45px 15px 15px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+        .arrow { transition: 0.3s; color: var(--accent); font-size: 18px; }
+        .expanded .arrow { transform: rotate(180deg); }
+
+        .details-area { display: none; background: #0c0c12; padding: 15px; border-top: 1px solid var(--border); }
+        .expanded .details-area { display: block; }
+
+        .batch-row { display: flex; align-items: center; justify-content: space-between; background: #1a1a24; padding: 10px; border-radius: 10px; margin-bottom: 8px; border: 1px solid #333; }
+        .batch-row input { background: none; border: none; color: white; font-size: 14px; width: 45%; outline: none; }
+        .batch-row .qty-input { width: 50px; text-align: center; color: var(--accent); font-weight: bold; border-right: 1px solid #333; }
+        
+        .delete-batch-btn { background: none; border: none; color: var(--danger); font-size: 18px; font-weight: bold; cursor: pointer; padding: 0 5px; }
+        .inner-add-btn { width: 100%; padding: 12px; background: rgba(0,229,160,0.1); border: 1px dashed var(--accent); color: var(--accent); border-radius: 10px; margin-top: 10px; cursor: pointer; font-weight: bold; }
+        .delete-product-btn { width: 100%; padding: 12px; background: rgba(255, 107, 107, 0.1); border: 1px dashed var(--danger); color: var(--danger); border-radius: 10px; margin-top: 10px; cursor: pointer; font-weight: bold; }
+
+        .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 2000; display: none; align-items: center; justify-content: center; flex-direction: column; }
+        .modal.show { display: flex; }
+        #interactive.viewport { width: 85%; aspect-ratio: 1; border: 3px solid var(--accent); border-radius: 20px; overflow: hidden; background: #000; }
+        #interactive.viewport video { width: 100%; height: 100%; object-fit: cover; }
+
+        .form-sheet { background: var(--surface); width: 100%; position: fixed; bottom: 0; padding: 30px 20px; border-radius: 25px 25px 0 0; display: none; z-index: 2100; box-shadow: 0 -5px 20px rgba(0,0,0,0.5); }
+        .form-sheet.show { display: block; animation: slideUp 0.3s ease; }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+
+        input[type="text"], input[type="date"], input[type="number"] { width: 100%; background: var(--card); border: 1px solid var(--border); padding: 15px; color: #fff; border-radius: 12px; margin-bottom: 10px; font-size: 16px; text-align: center; outline: none; transition: 0.3s; }
+        input[type="text"]:focus, input[type="date"]:focus, input[type="number"]:focus { border-color: var(--accent); }
+        
+        .loading-input { color: var(--warn) !important; border-color: var(--warn) !important; font-weight: bold; }
+
+        .save-btn { width: 100%; background: var(--accent); color: #000; padding: 15px; border-radius: 12px; border: none; font-weight: 900; font-size: 16px; cursor: pointer; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <div style="font-size: 40px;">📦</div>
+    <h2>مخزني الذكي</h2>
+</div>
+
+<button class="scan-btn" onclick="openScanner()">📷 امسح باركود المنتج</button>
+
+<div id="emptyState" class="empty-state">المخزن فاضي حالياً، ابدأ بإضافة منتجات!</div>
+<div id="mainList"></div>
+
+<div class="modal" id="scannerModal">
+    <div id="interactive" class="viewport"></div>
+    <button onclick="closeScanner()" style="margin-top:20px; color:#fff; background:none; border:1px solid #fff; padding:10px 30px; border-radius:10px; font-weight:bold; cursor:pointer;">إلغاء المسح</button>
+</div>
+
+<div class="form-sheet" id="addSheet">
+    <h3 style="text-align: center; margin-bottom: 20px;">إضافة منتج جديد</h3>
+    <input type="text" id="pName" placeholder="اسم المنتج">
+    <input type="date" id="pDate">
+    <input type="number" id="pQty" placeholder="الكمية" value="1" min="1">
+    <button class="save-btn" onclick="saveNewProduct()">حفظ المنتج</button>
+    <button onclick="closeSheet()" style="width:100%; background:none; border:none; color:var(--danger); margin-top:15px; font-weight:bold; cursor:pointer;">إلغاء</button>
+</div>
+
+<script>
+// إعدادات فايربيز
+const firebaseConfig = {
+  apiKey: "AIzaSyBAE2t4m8ba6UKdJOdmzV8XCv_SezfMZDA",
+  authDomain: "resh-base.firebaseapp.com",
+  projectId: "resh-base",
+  storageBucket: "resh-base.firebasestorage.app",
+  messagingSenderId: "782045310461",
+  appId: "1:782045310461:web:5658399bc1ab560e32fd94",
+  measurementId: "G-8SCWJVTWXP"
+};
+
+// تهيئة فايربيز
+firebase.initializeApp(firebaseConfig);
+const firestore = firebase.firestore();
+
+let db = {}; 
+let tempBarcode = null;
+let expandedCards = {}; 
+let isScanning = false; 
+
+// 🟢 متغير للتأكد من تشغيل التنبيه مرة واحدة فقط عند فتح التطبيق
+let hasCheckedExpiry = false; 
+
+firestore.collection("smart_products").onSnapshot((snapshot) => {
+    db = {}; 
+    snapshot.forEach((doc) => {
+        db[doc.id] = doc.data();
+    });
+    render(); 
+    
+    // 🟢 فحص تواريخ الصلاحية عند تحميل البيانات لأول مرة
+    if (!hasCheckedExpiry) {
+        checkExpiryAlerts();
+        hasCheckedExpiry = true; // نخليه true عشان ميشتغلش تاني مع كل تحديث بسيط
+    }
+});
+
+// 🟢 دالة فحص التواريخ وعرض التنبيه
+function checkExpiryAlerts() {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    let alertMessage = "";
+
+    const dbKeys = Object.keys(db);
+    
+    for(let code of dbKeys) {
+        const item = db[code];
+        const batches = item.batches || [];
+
+        batches.forEach((batch) => {
+            if (batch.date) {
+                const batchDate = new Date(batch.date);
+                batchDate.setHours(0, 0, 0, 0);
+
+                const diffTime = batchDate.getTime() - today.getTime();
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                if (diffDays === 0) {
+                    alertMessage += `🔴 الصنف "${item.name}" انتهت صلاحيته اليوم!\n`;
+                } else if (diffDays < 0) {
+                    alertMessage += `❌ الصنف "${item.name}" منتهي منذ ${Math.abs(diffDays)} يوم.\n`;
+                } else if (diffDays > 0 && diffDays <= 3) {
+                    alertMessage += `⚠️ الصنف "${item.name}" سينتهي بعد ${diffDays} أيام.\n`;
+                }
+            }
+        });
+    }
+
+    if (alertMessage !== "") {
+        // نأخر التنبيه جزء من الثانية عشان الصفحة تلحق تظهر للمستخدم الأول
+        setTimeout(() => {
+            alert("تنبيهات الصلاحية:\n\n" + alertMessage);
+        }, 500);
+    }
+}
+
+function openScanner() {
+    isScanning = false;
+    document.getElementById('scannerModal').classList.add('show');
+    Quagga.init({
+        inputStream: { name: "Live", type: "LiveStream", target: document.querySelector('#interactive'), constraints: { facingMode: "environment" } },
+        decoder: { readers: ["ean_reader", "code_128_reader"] }
+    }, (err) => { 
+        if(!err) {
+            Quagga.start(); 
+            isScanning = true;
+        } else {
+            alert("تعذر تشغيل الكاميرا");
+        }
+    });
+}
+
+async function fetchProductInfo(barcode) {
+    try {
+        const offRes = await fetch(`https://world.openfoodfacts.org/api/v0/product/${barcode}.json`);
+        const offData = await offRes.json();
+        if(offData.status === 1 && offData.product.product_name) {
+            return offData.product.product_name;
+        }
+    } catch(e) { console.log("OFF API Error", e); }
+
+    try {
+        const upcRes = await fetch(`https://api.upcitemdb.com/prod/trial/lookup?upc=${barcode}`);
+        const upcData = await upcRes.json();
+        if(upcData.code === "OK" && upcData.items && upcData.items.length > 0) {
+            return upcData.items[0].title;
+        }
+    } catch(e) { console.log("UPC API Error", e); }
+
+    return null;
+}
+
+Quagga.onDetected(async (res) => {
+    if (!isScanning) return; 
+    isScanning = false;
+    
+    tempBarcode = res.codeResult.code;
+    closeScanner();
+    
+    if (db[tempBarcode]) {
+        highlightItem(tempBarcode);
+    } else {
+        document.getElementById('addSheet').classList.add('show');
+        
+        const nameInput = document.getElementById('pName');
+        nameInput.value = 'جاري البحث عن اسم المنتج... ⏳';
+        nameInput.classList.add('loading-input');
+        
+        document.getElementById('pDate').value = '';
+        document.getElementById('pQty').value = '1';
+        
+        const foundName = await fetchProductInfo(tempBarcode);
+        
+        nameInput.classList.remove('loading-input');
+        
+        if(foundName) {
+            nameInput.value = foundName;
+        } else {
+            nameInput.value = '';
+            nameInput.placeholder = 'لم نجد الاسم في قواعد البيانات، اكتبه يدوياً';
+        }
+    }
+});
+
+function highlightItem(barcode) {
+    alert("هذا المنتج موجود بالفعل في القائمة!");
+    
+    expandedCards[barcode] = true;
+    render(); 
+    
+    setTimeout(() => {
+        const el = document.getElementById('card-' + barcode);
+        if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            el.classList.add('highlight');
+            setTimeout(() => el.classList.remove('highlight'), 3000);
+        }
+    }, 150);
+}
+
+function saveNewProduct() {
+    const name = document.getElementById('pName').value.replace('جاري البحث عن اسم المنتج... ⏳', '').trim();
+    const date = document.getElementById('pDate').value;
+    const qty = parseInt(document.getElementById('pQty').value);
+    
+    if(!name || !date || isNaN(qty) || qty < 1) {
+        return alert("يرجى إكمال جميع البيانات بشكل صحيح!");
+    }
+    
+    firestore.collection("smart_products").doc(tempBarcode).set({
+        name: name,
+        batches: [{ date: date, qty: qty }]
+    }).then(() => {
+        expandedCards[tempBarcode] = true; 
+        closeSheet();
+    });
+}
+
+function addExtraBatch(barcode) {
+    const today = new Date().toISOString().split('T')[0];
+    const newBatches = [...db[barcode].batches, { date: today, qty: 1 }];
+    
+    firestore.collection("smart_products").doc(barcode).update({
+        batches: newBatches
+    });
+    
+    expandedCards[barcode] = true;
+}
+
+function updateBatchData(barcode, idx, key, val) {
+    const updatedBatches = [...db[barcode].batches];
+    updatedBatches[idx][key] = (key === 'qty') ? (parseInt(val) || 1) : val;
+    
+    firestore.collection("smart_products").doc(barcode).update({
+        batches: updatedBatches
+    });
+}
+
+function removeBatch(barcode, idx) {
+    if(!confirm("هل تريد بالتأكيد حذف هذا التاريخ؟")) return;
+    
+    const updatedBatches = [...db[barcode].batches];
+    updatedBatches.splice(idx, 1);
+    
+    firestore.collection("smart_products").doc(barcode).update({
+        batches: updatedBatches
+    });
+}
+
+function deleteProduct(barcode) {
+    if(!confirm("هل تريد حذف هذا المنتج بجميع تواريخه من المخزن؟")) return;
+    firestore.collection("smart_products").doc(barcode).delete();
+    delete expandedCards[barcode];
+}
+
+function toggleCard(barcode) {
+    expandedCards[barcode] = !expandedCards[barcode];
+    const cardElement = document.getElementById('card-' + barcode);
+    if (cardElement) {
+        if (expandedCards[barcode]) {
+            cardElement.classList.add('expanded');
+        } else {
+            cardElement.classList.remove('expanded');
+        }
+    }
+}
+
+function getStatusClass(batches) {
+    if (!batches || batches.length === 0) return 'dot-gray';
+    const dates = batches.map(b => new Date(b.date).getTime());
+    const minDate = Math.min(...dates);
+    const now = new Date().getTime();
+    const diffDays = (minDate - now) / (1000 * 60 * 60 * 24);
+    if (diffDays < 7) return 'dot-red';
+    if (diffDays < 30) return 'dot-yellow';
+    return 'dot-green';
+}
+
+function render() {
+    const list = document.getElementById('mainList');
+    const emptyState = document.getElementById('emptyState');
+    list.innerHTML = '';
+    
+    const dbKeys = Object.keys(db);
+    
+    if(dbKeys.length === 0) {
+        emptyState.style.display = 'block';
+    } else {
+        emptyState.style.display = 'none';
+        
+        for(let code of dbKeys) {
+            const item = db[code];
+            const total = item.batches ? item.batches.reduce((s, b) => s + b.qty, 0) : 0;
+            const statusClass = getStatusClass(item.batches);
+            const isExpanded = expandedCards[code] ? 'expanded' : '';
+            
+            const card = document.createElement('div');
+            card.className = `product-card ${isExpanded}`;
+            card.id = 'card-' + code;
+            
+            const batchesHtml = (item.batches && item.batches.length > 0) 
+                ? item.batches.map((b, i) => `
+                    <div class="batch-row">
+                        <input type="date" value="${b.date}" onchange="updateBatchData('${code}', ${i}, 'date', this.value)">
+                        <input type="number" class="qty-input" value="${b.qty}" min="1" onchange="updateBatchData('${code}', ${i}, 'qty', this.value)">
+                        <button class="delete-batch-btn" onclick="removeBatch('${code}', ${i})" title="حذف هذا التاريخ">✕</button>
+                    </div>
+                `).join('') 
+                : `<div style="text-align:center; color:var(--muted); padding:10px;">لا يوجد تواريخ مسجلة. الكمية (0)</div>`;
+
+            card.innerHTML = `
+                <div class="status-dot ${statusClass}"></div>
+                <div class="card-main" onclick="toggleCard('${code}')">
+                    <div>
+                        <div style="font-weight:900; font-size:18px;">${item.name}</div>
+                        <div style="font-size:12px; color:var(--muted);">الكمية الإجمالية: <span style="color:var(--text); font-weight:bold;">${total}</span></div>
+                    </div>
+                    <div class="arrow">▼</div>
+                </div>
+                <div class="details-area">
+                    <div style="font-size:12px; color:var(--muted); margin-bottom:10px;">التواريخ والكميات:</div>
+                    <div id="list-${code}">
+                        ${batchesHtml}
+                    </div>
+                    <button class="inner-add-btn" onclick="addExtraBatch('${code}')">+ إضافة تاريخ صلاحية جديد</button>
+                    <button class="delete-product-btn" onclick="deleteProduct('${code}')">🗑️ حذف المنتج بالكامل</button>
+                </div>
+            `;
+            list.appendChild(card);
+        }
+    }
+}
+
+function closeScanner() { Quagga.stop(); document.getElementById('scannerModal').classList.remove('show'); isScanning = false; }
+function closeSheet() { document.getElementById('addSheet').classList.remove('show'); }
+</script>
+</body>
+</html>
